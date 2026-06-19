@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Inference GPU Monitor</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #1e1e1e; color: white; }
+        .stat-box { margin-bottom: 20px; }
+        .label { font-size: 18px; font-weight: bold; }
+        .number { font-size: 24px; color: #4ade80; float: right; }
+        progress { width: 100%; height: 25px; margin-top: 10px; }
+
+        /* Styling the progress bars */
+        progress::-webkit-progress-bar { background-color: #333; border-radius: 5px; }
+        progress::-webkit-progress-value { background-color: #4ade80; border-radius: 5px; transition: width 0.3s; }
+    </style>
+</head>
+<body>
+
+    <h2>Local GPU Inference Status</h2>
+
+    <div class="stat-box">
+        <span class="label">Compute Utilization</span>
+        <span class="number" id="gpu-num">0%</span>
+        <progress id="gpu-bar" value="0" max="100"></progress>
+    </div>
+
+    <div class="stat-box">
+        <span class="label">VRAM Usage</span>
+        <span class="number" id="vram-num">0%</span>
+        <progress id="vram-bar" value="0" max="100"></progress>
+    </div>
+
+    <script>
+        async function fetchGpuStats() {
+            try {
+                // Query the HTTP API exposed by your C program
+                const response = await fetch('/stats');
+                const data = await response.json();
+
+                // Update text numbers
+                document.getElementById('gpu-num').innerText = data.gpu_percent + '%';
+                document.getElementById('vram-num').innerText = data.vram_percent + '%';
+
+                // Update percentage bar graphs
+                document.getElementById('gpu-bar').value = data.gpu_percent;
+                document.getElementById('vram-bar').value = data.vram_percent;
+
+            } catch (error) {
+                console.error("Could not reach the C backend API", error);
+            }
+        }
+
+        // Poll the C API every 1 second
+        setInterval(fetchGpuStats, 1000);
+
+        // Fetch immediately on load
+        fetchGpuStats();
+    </script>
+</body>
+</html>
