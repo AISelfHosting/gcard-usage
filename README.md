@@ -27,16 +27,25 @@ make cuda
 # For AMD GPUs
 make rocm
 
+# Debug build (with symbols, no optimization)
+make cuda DEBUG=1
+
 # Clean build artifacts
 make clean
 ```
 
 ### Reverse-proxy base path
 
-If your server sits behind a proxy that adds a URL prefix (e.g. `/gpu-monitor`), pass `BASE_PATH` at compile time:
+If your server sits behind a proxy that adds a URL prefix (e.g. `/gpu-monitor`), pass `BASE_PATH` as a Make variable:
 
 ```bash
-make cuda CFLAGS="-DBASE_PATH=/gpu-monitor"
+make cuda BASE_PATH=/gpu-monitor
+```
+
+Both options can be combined:
+
+```bash
+make cuda BASE_PATH=/gpu-monitor DEBUG=1
 ```
 
 ## Running

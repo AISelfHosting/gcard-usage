@@ -4,6 +4,20 @@ CFLAGS = -Wall -O2
 SOURCES = main.c mongoose.c
 OUT = gcard_usage
 
+# Optional: pass BASE_PATH for reverse-proxy setups (e.g. make cuda BASE_PATH=/gpu-monitor)
+BASE_PATH ?=
+ifeq ($(strip $(BASE_PATH)),)
+  CFLAGS +=
+else
+  CFLAGS += -DBASE_PATH=$(BASE_PATH)
+endif
+
+# Optional: set DEBUG=1 for a debug build (e.g. make cuda DEBUG=1)
+DEBUG ?= 0
+ifeq ($(DEBUG),1)
+  CFLAGS += -g -O0 -DDEBUG
+endif
+
 # Make sure these targets aren't confused with actual files
 .PHONY: default cuda rocm clean build embed
 
