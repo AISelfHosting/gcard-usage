@@ -95,8 +95,17 @@ static void fn(struct mg_connection *c, int ev, void *ev_data, void *fn_data) {
     if (ev == MG_EV_HTTP_MSG) {
         struct mg_http_message *hm = (struct mg_http_message *)ev_data;
 
+#ifdef DEBUG
+        printf("[DEBUG] HTTP %.*s %.*s\n",
+               (int)hm->method.len, hm->method.ptr,
+               (int)hm->uri.len, hm->uri.ptr);
+#endif
+
         // --- Serve the embedded HTML at "/" ---
         if (mg_vcmp(&hm->uri, BASE_PATH "/") == 0 || mg_vcmp(&hm->uri, BASE_PATH "/index.html") == 0) {
+#ifdef DEBUG
+            printf("[DEBUG]   -> 200 (HTML)\n");
+#endif
             mg_http_reply(c, 200,
                 "Content-Type: text/html\r\n"
                 "Content-Length: %zu\r\n",
@@ -131,6 +140,10 @@ static void fn(struct mg_connection *c, int ev, void *ev_data, void *fn_data) {
 
             strncat(json_response, "]", sizeof(json_response) - strlen(json_response) - 1);
 
+#ifdef DEBUG
+            printf("[DEBUG]   -> 200 %s\n", json_response);
+#endif
+
             mg_http_reply(c, 200,
                 "Content-Type: application/json\r\n"
                 "Access-Control-Allow-Origin: *\r\n",
@@ -139,6 +152,9 @@ static void fn(struct mg_connection *c, int ev, void *ev_data, void *fn_data) {
         }
 
         // --- 404 for everything else ---
+#ifdef DEBUG
+        printf("[DEBUG]   -> 404 Not Found\n");
+#endif
         mg_http_reply(c, 404, "Content-Type: text/plain\r\n", "Not Found");
     }
 }
