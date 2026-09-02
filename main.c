@@ -23,14 +23,21 @@ void gpu_shutdown() {
     nvmlShutdown();
 }
 
-void get_gpu_stats(unsigned int *gpu_util, unsigned int *vram_util) {
+unsigned int get_gpu_count() {
+    unsigned int count = 0;
+    if (nvmlDeviceGetCount(&count) == NVML_SUCCESS) {
+        return count;
+    }
+    return 0;
+}
+
+void get_gpu_stats(unsigned int index, unsigned int *gpu_util, unsigned int *vram_util) {
     nvmlDevice_t device;
-    if (nvmlDeviceGetHandleByIndex(0, &device) == NVML_SUCCESS) {
+    if (nvmlDeviceGetHandleByIndex(index, &device) == NVML_SUCCESS) {
         nvmlUtilization_t util;
         if (nvmlDeviceGetUtilizationRates(device, &util) == NVML_SUCCESS) {
             *gpu_util = util.gpu;
         }
-
         nvmlMemory_t mem;
         if (nvmlDeviceGetMemoryInfo(device, &mem) == NVML_SUCCESS) {
             *vram_util = (unsigned int)((mem.used * 100.0) / mem.total);
@@ -43,7 +50,6 @@ void get_gpu_stats(unsigned int *gpu_util, unsigned int *vram_util) {
 #include <rocm_smi/rocm_smi.h>
 
 void gpu_init() {
-    // Pass 0 for initialization flags
     if (rsmi_init(0) != RSMI_STATUS_SUCCESS) {
         printf("Failed to initialize ROCm SMI. Are AMD drivers installed?\n");
     }
@@ -53,19 +59,23 @@ void gpu_shutdown() {
     rsmi_shut_down();
 }
 
-void get_gpu_stats(unsigned int *gpu_util, unsigned int *vram_util) {
-    uint32_t device_index = 0;
+unsigned int get_gpu_count() {
+    uint32_t count = 0;
+    if (rsmi_num_monitor_devices(&count) == RSMI_STATUS_SUCCESS) {
+        return count;
+    }
+    return 0;
+}
+
+void get_gpu_stats(unsigned int index, unsigned int *gpu_util, unsigned int *vram_util) {
     uint32_t busy_percent = 0;
     uint64_t mem_used = 0, mem_total = 0;
 
-    // Get GPU Compute Utilization
-    if (rsmi_dev_busy_percent_get(device_index, &busy_percent) == RSMI_STATUS_SUCCESS) {
+    if (rsmi_dev_busy_percent_get(index, &busy_percent) == RSMI_STATUS_SUCCESS) {
         *gpu_util = busy_percent;
     }
-
-    // Get VRAM Usage and Total
-    if (rsmi_dev_memory_usage_get(device_index, RSMI_MEM_TYPE_VRAM, &mem_used) == RSMI_STATUS_SUCCESS &&
-        rsmi_dev_memory_total_get(device_index, RSMI_MEM_TYPE_VRAM, &mem_total) == RSMI_STATUS_SUCCESS) {
+    if (rsmi_dev_memory_usage_get(index, RSMI_MEM_TYPE_VRAM, &mem_used) == RSMI_STATUS_SUCCESS &&
+        rsmi_dev_memory_total_get(index, RSMI_MEM_TYPE_VRAM, &mem_total) == RSMI_STATUS_SUCCESS) {
         if (mem_total > 0) {
             *vram_util = (unsigned int)((mem_used * 100.0) / mem_total);
         }
@@ -75,12 +85,18 @@ void get_gpu_stats(unsigned int *gpu_util, unsigned int *vram_util) {
 
 // ---------------- HTTP SERVER LOGIC ----------------
 
+// Optional base path prefix for reverse-proxy setups.
+// Example: define BASE_PATH=/gpu-monitor to serve at /gpu-monitor/ and /gpu-monitor/stats
+#ifndef BASE_PATH
+#define BASE_PATH ""
+#endif
+
 static void fn(struct mg_connection *c, int ev, void *ev_data, void *fn_data) {
     if (ev == MG_EV_HTTP_MSG) {
         struct mg_http_message *hm = (struct mg_http_message *)ev_data;
 
         // --- Serve the embedded HTML at "/" ---
-        if (mg_vcmp(&hm->uri, "/") == 0 || mg_vcmp(&hm->uri, "/index.html") == 0) {
+        if (mg_vcmp(&hm->uri, BASE_PATH "/") == 0 || mg_vcmp(&hm->uri, BASE_PATH "/index.html") == 0) {
             mg_http_reply(c, 200,
                 "Content-Type: text/html\r\n"
                 "Content-Length: %zu\r\n",
@@ -89,18 +105,36 @@ static void fn(struct mg_connection *c, int ev, void *ev_data, void *fn_data) {
             return;
         }
 
-        // --- Serve GPU stats as JSON at "/stats" ---
-        if (mg_vcmp(&hm->uri, "/stats") == 0) {
-            unsigned int gpu_util = 0;
-            unsigned int vram_util = 0;
+        // --- Serve GPU stats as JSON array at "/stats" ---
+        if (mg_vcmp(&hm->uri, BASE_PATH "/stats") == 0) {
+            unsigned int gpu_count = get_gpu_count();
 
-            get_gpu_stats(&gpu_util, &vram_util);
+            // Buffer to hold our dynamic JSON array
+            char json_response[4096];
+            strcpy(json_response, "[");
+
+            for (unsigned int i = 0; i < gpu_count; i++) {
+                unsigned int gpu_util = 0;
+                unsigned int vram_util = 0;
+                get_gpu_stats(i, &gpu_util, &vram_util);
+
+                // Format stats for this specific GPU
+                char gpu_json[128];
+                snprintf(gpu_json, sizeof(gpu_json),
+                         "{\"id\": %u, \"gpu_percent\": %u, \"vram_percent\": %u}%s",
+                         i, gpu_util, vram_util,
+                         (i == gpu_count - 1) ? "" : ","); // Add comma if not the last item
+
+                // Append to main JSON string safely
+                strncat(json_response, gpu_json, sizeof(json_response) - strlen(json_response) - 1);
+            }
+
+            strncat(json_response, "]", sizeof(json_response) - strlen(json_response) - 1);
 
             mg_http_reply(c, 200,
                 "Content-Type: application/json\r\n"
                 "Access-Control-Allow-Origin: *\r\n",
-                "{\"gpu_percent\": %u, \"vram_percent\": %u}",
-                gpu_util, vram_util);
+                "%s", json_response);
             return;
         }
 
@@ -123,6 +157,8 @@ int main() {
 #elif defined(USE_ROCM)
     printf("AMD ROCm GPU Monitor API running at http://localhost:8000\n");
 #endif
+
+    printf("Detected %u GPU(s).\n", get_gpu_count());
 
     // Infinite loop keeping the server alive
     for (;;) {
