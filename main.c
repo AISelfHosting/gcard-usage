@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 #include "mongoose.h"
 #include "index_html.h"
 
@@ -8,6 +9,16 @@
 #if !defined(USE_NVML) && !defined(USE_ROCM)
     #error "You must define either USE_NVML or USE_ROCM at compile time."
 #endif
+
+// --- GLOBALS FOR CACHING ---
+#define MAX_GPUS 16
+typedef struct {
+    unsigned int gpu_percent;
+    unsigned int vram_percent;
+} gpu_stat_t;
+
+gpu_stat_t cached_stats[MAX_GPUS];
+unsigned int global_gpu_count = 0;
 
 // ---------------- NVIDIA / CUDA BACKEND ----------------
 #if defined(USE_NVML)
@@ -85,12 +96,6 @@ void get_gpu_stats(unsigned int index, unsigned int *gpu_util, unsigned int *vra
 
 // ---------------- HTTP SERVER LOGIC ----------------
 
-// Optional base path prefix for reverse-proxy setups.
-// Example: define BASE_PATH=/gpu-monitor to serve at /gpu-monitor/ and /gpu-monitor/stats
-#ifndef BASE_PATH
-#define BASE_PATH ""
-#endif
-
 static void fn(struct mg_connection *c, int ev, void *ev_data, void *fn_data) {
     if (ev == MG_EV_HTTP_MSG) {
         struct mg_http_message *hm = (struct mg_http_message *)ev_data;
@@ -102,7 +107,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data, void *fn_data) {
 #endif
 
         // --- Serve the embedded HTML at "/" ---
-        if (mg_vcmp(&hm->uri, BASE_PATH "/") == 0 || mg_vcmp(&hm->uri, BASE_PATH "/index.html") == 0) {
+        if (mg_vcmp(&hm->uri, "/") == 0 || mg_vcmp(&hm->uri, "/index.html") == 0) {
 #ifdef DEBUG
             printf("[DEBUG]   -> 200 (HTML)\n");
 #endif
@@ -117,24 +122,18 @@ static void fn(struct mg_connection *c, int ev, void *ev_data, void *fn_data) {
         }
 
         // --- Serve GPU stats as JSON array at "/stats" ---
-        if (mg_vcmp(&hm->uri, BASE_PATH "/stats") == 0) {
-            unsigned int gpu_count = get_gpu_count();
-
+        if (mg_vcmp(&hm->uri, "/stats") == 0) {
             // Buffer to hold our dynamic JSON array
             char json_response[4096];
             strcpy(json_response, "[");
 
-            for (unsigned int i = 0; i < gpu_count; i++) {
-                unsigned int gpu_util = 0;
-                unsigned int vram_util = 0;
-                get_gpu_stats(i, &gpu_util, &vram_util);
-
-                // Format stats for this specific GPU
+            for (unsigned int i = 0; i < global_gpu_count; i++) {
+                // Note: We are pulling from the safe CACHE now, not querying the GPU directly!
                 char gpu_json[128];
                 snprintf(gpu_json, sizeof(gpu_json),
                          "{\"id\": %u, \"gpu_percent\": %u, \"vram_percent\": %u}%s",
-                         i, gpu_util, vram_util,
-                         (i == gpu_count - 1) ? "" : ","); // Add comma if not the last item
+                         i, cached_stats[i].gpu_percent, cached_stats[i].vram_percent,
+                         (i == global_gpu_count - 1) ? "" : ","); // Add comma if not the last item
 
                 // Append to main JSON string safely
                 strncat(json_response, gpu_json, sizeof(json_response) - strlen(json_response) - 1);
@@ -176,11 +175,34 @@ int main() {
     printf("AMD ROCm GPU Monitor API running at http://localhost:8000\n");
 #endif
 
-    printf("Detected %u GPU(s).\n", get_gpu_count());
+    global_gpu_count = get_gpu_count();
+    if (global_gpu_count > MAX_GPUS) global_gpu_count = MAX_GPUS;
+
+    printf("Detected %u GPU(s).\n", global_gpu_count);
+
+    // Wait 10 seconds before first GPU read to let other processes settle
+    printf("Waiting 10 seconds before first GPU read...\n");
+    sleep(10);
+
+    time_t last_query = 0;
 
     // Infinite loop keeping the server alive
     for (;;) {
-        mg_mgr_poll(&mgr, 1000);
+        time_t now = time(NULL);
+
+        // Query GPUs once per second to prevent driver deadlocks
+        if (now != last_query) {
+#ifdef DEBUG
+            printf("[GPU] Reading stats at %lu\n", (unsigned long)now);
+#endif
+            for (unsigned int i = 0; i < global_gpu_count; i++) {
+                get_gpu_stats(i, &cached_stats[i].gpu_percent, &cached_stats[i].vram_percent);
+            }
+            last_query = now;
+        }
+
+        // Check for network requests (Yields CPU for 200ms)
+        mg_mgr_poll(&mgr, 200);
     }
 
     mg_mgr_free(&mgr);

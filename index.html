@@ -139,7 +139,7 @@
         // Fetches data and updates UI
         async function fetchGpuStats() {
             try {
-                const response = await fetch('stats');
+                const response = await fetch('/stats');
                 const gpuArray = await response.json(); // Now expects an array!
                 
                 // If it's our first time, or if the number of GPUs changed, rebuild the UI
