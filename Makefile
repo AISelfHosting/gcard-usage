@@ -9,7 +9,7 @@ BASE_PATH ?=
 ifeq ($(strip $(BASE_PATH)),)
   CFLAGS +=
 else
-  CFLAGS += -DBASE_PATH="$(BASE_PATH)"
+  CFLAGS += -DBASE_PATH=\"$(BASE_PATH)\"
 endif
 
 # Optional: set DEBUG=1 for a debug build (e.g. make rocm DEBUG=1)
