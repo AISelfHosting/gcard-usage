@@ -111,13 +111,9 @@ static void fn(struct mg_connection *c, int ev, void *ev_data, void *fn_data) {
 #ifdef DEBUG
             printf("[DEBUG]   -> 200 (HTML)\n");
 #endif
-            {
-                char headers[128];
-                snprintf(headers, sizeof(headers),
-                    "Content-Type: text/html\r\nContent-Length: %zu\r\n",
-                    index_html_len);
-                mg_http_reply(c, 200, headers, "%.*s", (int)index_html_len, index_html);
-            }
+            mg_http_reply(c, 200,
+                "Content-Type: text/html\r\n",
+                "%.*s", (int)index_html_len, index_html);
             return;
         }
 
